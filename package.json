@@ -1,0 +1,49 @@
+{
+  "name": "@haikal-fikri/archimate",
+  "version": "0.1.0",
+  "description": "ArchiMate Open Exchange XML viewer — parser + SVG renderer with full ArchiMate 3.2 notation",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean",
+    "test": "vitest run",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "peerDependencies": {
+    "react": "^18 || ^19"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "jsdom": "^25.0.0",
+    "react": "^19.0.0",
+    "tsup": "^8.3.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  },
+  "keywords": [
+    "archimate",
+    "enterprise-architecture",
+    "diagram",
+    "svg",
+    "react"
+  ],
+  "license": "MIT",
+  "repository": "github:haikal-fikri/archimate-renderer",
+  "homepage": "https://github.com/haikal-fikri/archimate-renderer#readme",
+  "publishConfig": {
+    "access": "public"
+  }
+}
