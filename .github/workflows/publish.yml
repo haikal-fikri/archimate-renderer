@@ -21,6 +21,6 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+      # Auth uses npm Trusted Publishers (GitHub OIDC) — no NPM_TOKEN needed.
+      # Configure once at npmjs.com → package → Trusted Publisher.
       - run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
