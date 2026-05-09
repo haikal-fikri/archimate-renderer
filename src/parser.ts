@@ -8,7 +8,12 @@ function isJunctionType(t?: string): boolean {
   return t === 'Junction' || t === 'AndJunction' || t === 'OrJunction'
 }
 
-const OPEN_EXCHANGE_NS = 'http://www.opengroup.org/xsd/archimate/3.0/'
+const OPEN_EXCHANGE_NS_V3 = 'http://www.opengroup.org/xsd/archimate/3.0/'
+const OPEN_EXCHANGE_NS_V2 = 'http://www.opengroup.org/xsd/archimate'
+const OPEN_EXCHANGE_NAMESPACES: ReadonlySet<string> = new Set([
+  OPEN_EXCHANGE_NS_V3,
+  OPEN_EXCHANGE_NS_V2,
+])
 const NATIVE_ARCHI_NS = 'http://www.archimatetool.com/archimate'
 const XSI_NS = 'http://www.w3.org/2001/XMLSchema-instance'
 
@@ -48,6 +53,44 @@ function xsiType(el: Element): string | undefined {
 
 function textOf(el: Element | null): string {
   return (el?.textContent ?? '').trim()
+}
+
+// v3 puts human-readable text in <name>; v2.1 uses <label>. Try both.
+function nameOrLabel(el: Element): string {
+  return textOf(firstChild(el, 'name')) || textOf(firstChild(el, 'label'))
+}
+
+// v3 relationship types are bare: 'Access', 'Realization', 'Specialization'.
+// v2.1 appends 'Relationship' and uses British spellings: 'AccessRelationship',
+// 'RealisationRelationship', 'SpecialisationRelationship'. Normalize to v3.
+function normalizeRelationshipType(raw: string | undefined): string | undefined {
+  if (!raw) return undefined
+  const stripped = raw.endsWith('Relationship') ? raw.slice(0, -'Relationship'.length) : raw
+  if (stripped === 'Realisation') return 'Realization'
+  if (stripped === 'Specialisation') return 'Specialization'
+  return stripped
+}
+
+// v2.1 used 'Infrastructure*' for the Technology layer and 'Network' for
+// 'CommunicationNetwork'. Map to v3 so colors and icons resolve correctly.
+const ELEMENT_TYPE_RENAMES: Record<string, string> = {
+  InfrastructureService: 'TechnologyService',
+  InfrastructureFunction: 'TechnologyFunction',
+  InfrastructureInterface: 'TechnologyInterface',
+  Network: 'CommunicationNetwork',
+}
+function normalizeElementType(raw: string | undefined): string | undefined {
+  if (!raw) return undefined
+  return ELEMENT_TYPE_RENAMES[raw] ?? raw
+}
+
+// Both lowercase (v2.1) and camelCase (v3) variants of the same attribute.
+function attr(el: Element, ...names: string[]): string | null {
+  for (const n of names) {
+    const v = el.getAttribute(n)
+    if (v !== null) return v
+  }
+  return null
 }
 
 function rgbaFromColor(el: Element | null): string | undefined {
@@ -98,9 +141,9 @@ export function parseArchimate(xml: string, viewId?: string): ParsedView {
     )
   }
 
-  if (root.namespaceURI !== OPEN_EXCHANGE_NS) {
+  if (!root.namespaceURI || !OPEN_EXCHANGE_NAMESPACES.has(root.namespaceURI)) {
     throw new ArchimateParseError(
-      `Expected ArchiMate Open Exchange XML (namespace ${OPEN_EXCHANGE_NS}). Got ${root.namespaceURI ?? 'no namespace'}.`,
+      `Expected ArchiMate Open Exchange XML (namespace ${OPEN_EXCHANGE_NS_V3} or ${OPEN_EXCHANGE_NS_V2}). Got ${root.namespaceURI ?? 'no namespace'}.`,
       'wrong-format',
     )
   }
@@ -112,8 +155,8 @@ export function parseArchimate(xml: string, viewId?: string): ParsedView {
       const id = el.getAttribute('identifier')
       if (!id) continue
       elementMap.set(id, {
-        name: textOf(firstChild(el, 'name')) || id,
-        type: xsiType(el),
+        name: nameOrLabel(el) || id,
+        type: normalizeElementType(xsiType(el)),
       })
     }
   }
@@ -147,20 +190,20 @@ export function parseArchimate(xml: string, viewId?: string): ParsedView {
       relationshipMap.set(id, {
         source,
         target,
-        type: xsiType(r),
+        type: normalizeRelationshipType(xsiType(r)),
         accessType,
         isDirected,
-        name: textOf(firstChild(r, 'name')) || undefined,
+        name: nameOrLabel(r) || undefined,
       })
     }
   }
 
   const viewsEl = firstChild(root, 'views')
   if (!viewsEl) throw new ArchimateParseError('Model has no <views> section.', 'no-views')
-  const diagramsEl = firstChild(viewsEl, 'diagrams')
-  if (!diagramsEl) throw new ArchimateParseError('Model has no <diagrams> section.', 'no-views')
+  // v3 nests views under <views><diagrams>; v2.1 puts <view> directly under <views>.
+  const viewParent = firstChild(viewsEl, 'diagrams') ?? viewsEl
 
-  const allViews = childrenOf(diagramsEl, 'view')
+  const allViews = childrenOf(viewParent, 'view')
   if (allViews.length === 0) throw new ArchimateParseError('Model contains no views.', 'no-views')
 
   let viewEl: Element | null = null
@@ -177,7 +220,7 @@ export function parseArchimate(xml: string, viewId?: string): ParsedView {
   }
 
   const viewName =
-    textOf(firstChild(viewEl, 'name')) || viewEl.getAttribute('identifier') || 'Untitled view'
+    nameOrLabel(viewEl) || viewEl.getAttribute('identifier') || 'Untitled view'
 
   const nodes: NodeBox[] = []
 
@@ -192,12 +235,14 @@ export function parseArchimate(xml: string, viewId?: string): ParsedView {
     const x = RELATIVE_COORDINATES ? lx + offsetX : lx
     const y = RELATIVE_COORDINATES ? ly + offsetY : ly
 
-    const elementRef = nodeEl.getAttribute('elementRef')
+    const elementRef = attr(nodeEl, 'elementRef', 'elementref')
     const elementInfo = elementRef ? elementMap.get(elementRef) : undefined
     const nodeType = xsiType(nodeEl)
 
     const styleEl = firstChild(nodeEl, 'style')
-    const fillEl = styleEl ? firstChild(styleEl, 'fillColor') : null
+    // Authored fill colors are intentionally ignored — we always use the
+    // ArchiMate layer color so a diagram looks consistent regardless of
+    // what the source tool wrote.
     const lineEl = styleEl ? firstChild(styleEl, 'lineColor') : null
     const fontEl = styleEl ? firstChild(styleEl, 'font') : null
     const fontColorEl = fontEl ? firstChild(fontEl, 'color') : null
@@ -211,12 +256,12 @@ export function parseArchimate(xml: string, viewId?: string): ParsedView {
       elementType: elementInfo?.type,
       nodeType,
       isJunction: isJunctionType(elementInfo?.type),
-      label: elementInfo?.name ?? textOf(firstChild(nodeEl, 'label')),
+      label: elementInfo?.name ?? nameOrLabel(nodeEl),
       x,
       y,
       w,
       h,
-      fill: rgbaFromColor(fillEl) ?? colorForType(elementInfo?.type),
+      fill: colorForType(elementInfo?.type),
       stroke: rgbaFromColor(lineEl) ?? DEFAULT_STROKE,
       textColor: rgbaFromColor(fontColorEl) ?? DEFAULT_TEXT,
       fontFamily: fontEl?.getAttribute('name') ?? undefined,
@@ -241,7 +286,7 @@ export function parseArchimate(xml: string, viewId?: string): ParsedView {
     if (!id || !source || !target) continue
     if (!nodeMap.has(source) || !nodeMap.has(target)) continue
 
-    const relRef = c.getAttribute('relationshipRef')
+    const relRef = attr(c, 'relationshipRef', 'relationshipref')
     const relInfo = relRef ? relationshipMap.get(relRef) : undefined
 
     const bendpoints: Point[] = []
@@ -281,7 +326,7 @@ export function parseArchimate(xml: string, viewId?: string): ParsedView {
     maxX = 100
     maxY = 100
   }
-  const pad = 20
+  const pad = 40
 
   return {
     viewId: viewEl.getAttribute('identifier') ?? '',

@@ -3,6 +3,7 @@
 import {
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
   forwardRef,
   useEffect,
   useImperativeHandle,
@@ -59,6 +60,11 @@ export const ArchimateRenderer = forwardRef<ArchimateRendererHandle, Props>(
       for (const n of view.nodes) map.set(n.id, n)
       return map
     }, [view])
+
+    const endpointPlan = useMemo(
+      () => planEndpoints(view.connections, nodeMap),
+      [view, nodeMap],
+    )
 
     function applyTransform() {
       const { tx, ty, scale } = stateRef.current
@@ -179,14 +185,22 @@ export const ArchimateRenderer = forwardRef<ArchimateRendererHandle, Props>(
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
       >
-        <Markers />
         <g ref={gRef}>
-          {view.connections.map((c) => (
-            <ConnectionPath key={c.id} edge={c} nodeMap={nodeMap} />
-          ))}
           {view.nodes.map((n) => (
             <NodeShape key={n.id} node={n} />
           ))}
+          {view.connections.map((c) => {
+            const pts = endpointPlan.get(c.id)
+            if (!pts) return null
+            return (
+              <ConnectionPath
+                key={c.id}
+                edge={c}
+                sourcePoint={pts.source}
+                targetPoint={pts.target}
+              />
+            )
+          })}
         </g>
       </svg>
     )
@@ -201,87 +215,105 @@ export const ArchimateRenderer = forwardRef<ArchimateRendererHandle, Props>(
 // markerEnd without a flipped duplicate.
 // ---------------------------------------------------------------------------
 
-function Markers() {
+// Marker glyphs rendered inline (NOT via <marker>) so they don't inherit
+// stroke-dasharray from a dashed parent polyline — Chrome/Safari otherwise
+// dot-strokes the marker outline, which we don't want for Realization /
+// Specialization / Flow / Influence / Access. Each glyph defines its
+// reference point (where the line endpoint lands), the path geometry, and
+// whether it should flip 180° at line start (was orient="auto-start-reverse").
+type MarkerGlyph = {
+  refX: number
+  refY: number
+  paint: ReactNode
+  // True if this glyph should be reversed when used as markerStart (matches
+  // the SVG `orient="auto-start-reverse"` behavior of its old <marker>).
+  reverseAtStart: boolean
+}
+
+const MARKER_GLYPHS: Record<string, MarkerGlyph> = {
+  'archi-arrow-filled': {
+    refX: 11,
+    refY: 5,
+    reverseAtStart: true,
+    paint: <path d="M 0 0 L 12 5 L 0 10 Z" fill="currentColor" />,
+  },
+  'archi-arrow-open': {
+    refX: 11,
+    refY: 5,
+    reverseAtStart: true,
+    paint: (
+      <path d="M 0 0 L 12 5 L 0 10" fill="none" stroke="currentColor" strokeWidth="1.2" />
+    ),
+  },
+  'archi-triangle-hollow': {
+    refX: 11,
+    refY: 6,
+    reverseAtStart: true,
+    paint: (
+      <path d="M 0 0 L 12 6 L 0 12 Z" fill="white" stroke="currentColor" strokeWidth="1" />
+    ),
+  },
+  'archi-diamond-filled': {
+    refX: 0,
+    refY: 5,
+    reverseAtStart: false,
+    paint: (
+      <path
+        d="M 0 5 L 7 0 L 14 5 L 7 10 Z"
+        fill="#1A1A1A"
+        stroke="#1A1A1A"
+        strokeWidth="1"
+      />
+    ),
+  },
+  'archi-diamond-hollow': {
+    refX: 0,
+    refY: 5,
+    reverseAtStart: false,
+    paint: (
+      <path
+        d="M 0 5 L 7 0 L 14 5 L 7 10 Z"
+        fill="white"
+        stroke="#1A1A1A"
+        strokeWidth="1"
+      />
+    ),
+  },
+  'archi-arrow-thin': {
+    refX: 9,
+    refY: 4,
+    reverseAtStart: true,
+    paint: <path d="M 0 0 L 10 4 L 0 8" fill="none" stroke="currentColor" strokeWidth="1" />,
+  },
+  'archi-dot-filled': {
+    refX: 1,
+    refY: 4,
+    reverseAtStart: false,
+    paint: <circle cx="4" cy="4" r="3" fill="currentColor" />,
+  },
+}
+
+function MarkerInline({
+  glyph,
+  position,
+  pathAngleRad,
+  isStart,
+}: {
+  glyph: string
+  position: Point
+  pathAngleRad: number
+  isStart: boolean
+}) {
+  const spec = MARKER_GLYPHS[glyph]
+  if (!spec) return null
+  const angle = isStart && spec.reverseAtStart ? pathAngleRad + Math.PI : pathAngleRad
+  const angleDeg = (angle * 180) / Math.PI
   return (
-    <defs>
-      <marker
-        id="archi-arrow-filled"
-        viewBox="0 0 12 10"
-        refX="11"
-        refY="5"
-        markerWidth="11"
-        markerHeight="9"
-        orient="auto-start-reverse"
-        markerUnits="userSpaceOnUse"
-      >
-        <path d="M 0 0 L 12 5 L 0 10 Z" fill="currentColor" />
-      </marker>
-
-      <marker
-        id="archi-arrow-open"
-        viewBox="0 0 12 10"
-        refX="11"
-        refY="5"
-        markerWidth="13"
-        markerHeight="11"
-        orient="auto-start-reverse"
-        markerUnits="userSpaceOnUse"
-      >
-        <path d="M 0 0 L 12 5 L 0 10" fill="none" stroke="currentColor" strokeWidth="1.2" />
-      </marker>
-
-      <marker
-        id="archi-triangle-hollow"
-        viewBox="0 0 12 12"
-        refX="11"
-        refY="6"
-        markerWidth="13"
-        markerHeight="13"
-        orient="auto-start-reverse"
-        markerUnits="userSpaceOnUse"
-      >
-        <path d="M 0 0 L 12 6 L 0 12 Z" fill="white" stroke="currentColor" strokeWidth="1" />
-      </marker>
-
-      <marker
-        id="archi-diamond-filled"
-        viewBox="0 0 14 10"
-        refX="0"
-        refY="5"
-        markerWidth="14"
-        markerHeight="10"
-        orient="auto"
-        markerUnits="userSpaceOnUse"
-      >
-        <path d="M 0 5 L 7 0 L 14 5 L 7 10 Z" fill="currentColor" />
-      </marker>
-
-      <marker
-        id="archi-diamond-hollow"
-        viewBox="0 0 14 10"
-        refX="0"
-        refY="5"
-        markerWidth="14"
-        markerHeight="10"
-        orient="auto"
-        markerUnits="userSpaceOnUse"
-      >
-        <path d="M 0 5 L 7 0 L 14 5 L 7 10 Z" fill="white" stroke="currentColor" strokeWidth="1" />
-      </marker>
-
-      <marker
-        id="archi-dot-filled"
-        viewBox="0 0 8 8"
-        refX="1"
-        refY="4"
-        markerWidth="8"
-        markerHeight="8"
-        orient="auto"
-        markerUnits="userSpaceOnUse"
-      >
-        <circle cx="4" cy="4" r="3" fill="currentColor" />
-      </marker>
-    </defs>
+    <g
+      transform={`translate(${position.x} ${position.y}) rotate(${angleDeg}) translate(${-spec.refX} ${-spec.refY})`}
+    >
+      {spec.paint}
+    </g>
   )
 }
 
@@ -330,13 +362,13 @@ function styleForEdge(edge: Edge): EdgeStyle {
     case 'Access': {
       // dotted; arrow direction depends on Read / Write / ReadWrite
       const at = edge.accessType ?? 'Access'
-      if (at === 'Read') return { dashArray: DOT_PATTERN, markerStart: 'archi-arrow-open' }
-      if (at === 'Write') return { dashArray: DOT_PATTERN, markerEnd: 'archi-arrow-open' }
+      if (at === 'Read') return { dashArray: DOT_PATTERN, markerStart: 'archi-arrow-thin' }
+      if (at === 'Write') return { dashArray: DOT_PATTERN, markerEnd: 'archi-arrow-thin' }
       if (at === 'ReadWrite')
         return {
           dashArray: DOT_PATTERN,
-          markerStart: 'archi-arrow-open',
-          markerEnd: 'archi-arrow-open',
+          markerStart: 'archi-arrow-thin',
+          markerEnd: 'archi-arrow-thin',
         }
       // 'Access' (no specified direction) — line only, no arrows
       return { dashArray: DOT_PATTERN }
@@ -352,36 +384,155 @@ function styleForEdge(edge: Edge): EdgeStyle {
   }
 }
 
-function ConnectionPath({ edge, nodeMap }: { edge: Edge; nodeMap: Map<string, NodeBox> }) {
-  const source = nodeMap.get(edge.sourceId)
-  const target = nodeMap.get(edge.targetId)
-  if (!source || !target) return null
-
-  const { source: sourcePoint, target: targetPoint } = endpointsForConnection(
-    source,
-    target,
-    edge.bendpoints,
-  )
-
-  const points = [sourcePoint, ...edge.bendpoints, targetPoint]
-    .map((p) => `${p.x},${p.y}`)
-    .join(' ')
+function ConnectionPath({
+  edge,
+  sourcePoint,
+  targetPoint,
+}: {
+  edge: Edge
+  sourcePoint: Point
+  targetPoint: Point
+}) {
+  const allPoints = [sourcePoint, ...edge.bendpoints, targetPoint]
+  const pointsStr = allPoints.map((p) => `${p.x},${p.y}`).join(' ')
 
   const style = styleForEdge(edge)
   const stroke = edge.stroke ?? DEFAULT_STROKE
 
-  return (
-    <polyline
-      points={points}
-      fill="none"
-      stroke={stroke}
-      strokeWidth={1}
-      strokeDasharray={style.dashArray}
-      markerStart={style.markerStart ? `url(#${style.markerStart})` : undefined}
-      markerEnd={style.markerEnd ? `url(#${style.markerEnd})` : undefined}
-      style={{ color: stroke }}
-    />
+  // Path direction at each end: from neighbor toward the endpoint. Markers are
+  // rendered inline (not via <marker>) so a dashed polyline doesn't bleed its
+  // stroke-dasharray into the marker outline.
+  const startNeighbor = allPoints[1] ?? sourcePoint
+  const endNeighbor = allPoints[allPoints.length - 2] ?? targetPoint
+  const startAngle = Math.atan2(
+    startNeighbor.y - sourcePoint.y,
+    startNeighbor.x - sourcePoint.x,
   )
+  const endAngle = Math.atan2(
+    targetPoint.y - endNeighbor.y,
+    targetPoint.x - endNeighbor.x,
+  )
+
+  return (
+    <g style={{ color: stroke }}>
+      <polyline
+        points={pointsStr}
+        fill="none"
+        stroke={stroke}
+        strokeWidth={1}
+        strokeDasharray={style.dashArray}
+      />
+      {style.markerStart ? (
+        <MarkerInline
+          glyph={style.markerStart}
+          position={sourcePoint}
+          pathAngleRad={startAngle}
+          isStart
+        />
+      ) : null}
+      {style.markerEnd ? (
+        <MarkerInline
+          glyph={style.markerEnd}
+          position={targetPoint}
+          pathAngleRad={endAngle}
+          isStart={false}
+        />
+      ) : null}
+    </g>
+  )
+}
+
+// Compute endpoint positions for every connection in the view, distributing
+// attachments along each node side when multiple edges share it.
+//
+// - Connections with authored bendpoints are honored as-is (no distribution).
+// - Single-edge groups keep the orthogonal-snap / diagonal-edge behavior from
+//   `endpointsForConnection`.
+// - Multi-edge groups: edges sharing the same exit side of a node are sorted
+//   by the position of their other end (so lines don't cross at the boundary)
+//   and spread evenly along that side at i/(N+1) fractions.
+type Side = 'left' | 'right' | 'top' | 'bottom'
+
+function pickSide(box: NodeBox, towards: Point): Side {
+  const cx = box.x + box.w / 2
+  const cy = box.y + box.h / 2
+  const dx = towards.x - cx
+  const dy = towards.y - cy
+  const ax = Math.abs(dx) / Math.max(box.w / 2, 1)
+  const ay = Math.abs(dy) / Math.max(box.h / 2, 1)
+  if (ax >= ay) return dx >= 0 ? 'right' : 'left'
+  return dy >= 0 ? 'bottom' : 'top'
+}
+
+function pointOnSide(box: NodeBox, side: Side, t: number): Point {
+  switch (side) {
+    case 'left':
+      return { x: box.x, y: box.y + box.h * t }
+    case 'right':
+      return { x: box.x + box.w, y: box.y + box.h * t }
+    case 'top':
+      return { x: box.x + box.w * t, y: box.y }
+    case 'bottom':
+      return { x: box.x + box.w * t, y: box.y + box.h }
+  }
+}
+
+function planEndpoints(
+  connections: Edge[],
+  nodeMap: Map<string, NodeBox>,
+): Map<string, { source: Point; target: Point }> {
+  const result = new Map<string, { source: Point; target: Point }>()
+
+  // Per-(node, side) lists of {edgeId, isSourceEnd, guideCoord}.
+  type Slot = { edgeId: string; isSourceEnd: boolean; guideCoord: number }
+  const groups = new Map<string, Map<Side, Slot[]>>()
+  const addSlot = (nodeId: string, side: Side, slot: Slot) => {
+    let byNode = groups.get(nodeId)
+    if (!byNode) groups.set(nodeId, (byNode = new Map()))
+    let list = byNode.get(side)
+    if (!list) byNode.set(side, (list = []))
+    list.push(slot)
+  }
+
+  for (const edge of connections) {
+    const s = nodeMap.get(edge.sourceId)
+    const t = nodeMap.get(edge.targetId)
+    if (!s || !t) continue
+    const initial = endpointsForConnection(s, t, edge.bendpoints)
+    result.set(edge.id, initial)
+
+    if (edge.bendpoints.length > 0) continue
+    if (s.isJunction || t.isJunction) continue
+
+    const tCenter = nodeCenter(t)
+    const sCenter = nodeCenter(s)
+    const sSide = pickSide(s, tCenter)
+    const tSide = pickSide(t, sCenter)
+    const sGuide = sSide === 'left' || sSide === 'right' ? tCenter.y : tCenter.x
+    const tGuide = tSide === 'left' || tSide === 'right' ? sCenter.y : sCenter.x
+    addSlot(s.id, sSide, { edgeId: edge.id, isSourceEnd: true, guideCoord: sGuide })
+    addSlot(t.id, tSide, { edgeId: edge.id, isSourceEnd: false, guideCoord: tGuide })
+  }
+
+  for (const [nodeId, byNode] of groups) {
+    const node = nodeMap.get(nodeId)!
+    for (const [side, slots] of byNode) {
+      if (slots.length < 2) continue
+      slots.sort((a, b) => a.guideCoord - b.guideCoord)
+      for (let i = 0; i < slots.length; i++) {
+        const point = pointOnSide(node, side, (i + 1) / (slots.length + 1))
+        const cur = result.get(slots[i].edgeId)!
+        result.set(
+          slots[i].edgeId,
+          slots[i].isSourceEnd
+            ? { source: point, target: cur.target }
+            : { source: cur.source, target: point },
+        )
+      }
+    }
+  }
+
+  return result
 }
 
 // Compute the (source endpoint, target endpoint) pair for a connection.
@@ -465,28 +616,35 @@ function nodeCenter(n: NodeBox): Point {
   return { x: n.x + n.w / 2, y: n.y + n.h / 2 }
 }
 
-// Attach a connection endpoint to a node's edge using orthogonal projection
-// (matches Archi's routing). If the next waypoint is to the side, exit the
-// matching side at the waypoint's Y (clamped). If above/below, exit top/bottom
-// at the waypoint's X (clamped). Diagonal targets fall through to the side
-// they're farther from, which produces a corner attachment.
+// Attach a connection endpoint to a node's edge.
+//
+// - Strictly orthogonal (waypoint to one side only): exit that side at the
+//   waypoint's matching coordinate. Matches Archi's routing.
+// - Corner-zone (waypoint diagonally beyond a corner): exit at the actual
+//   line-rectangle intersection from the box center toward the waypoint, so
+//   the line meets the edge cleanly and the arrow head sits flush against
+//   the shape (avoids the gap that corner-snapping produces).
 function attachPoint(box: NodeBox, towards: Point): Point {
   const left = box.x
   const right = box.x + box.w
   const top = box.y
   const bottom = box.y + box.h
+  const xOut = towards.x < left ? -1 : towards.x > right ? 1 : 0
+  const yOut = towards.y < top ? -1 : towards.y > bottom ? 1 : 0
 
-  if (towards.x <= left) {
-    return { x: left, y: clamp(towards.y, top, bottom) }
+  if (xOut !== 0 && yOut === 0) {
+    return { x: xOut < 0 ? left : right, y: clamp(towards.y, top, bottom) }
   }
-  if (towards.x >= right) {
-    return { x: right, y: clamp(towards.y, top, bottom) }
+  if (xOut === 0 && yOut !== 0) {
+    return { x: clamp(towards.x, left, right), y: yOut < 0 ? top : bottom }
   }
-  if (towards.y <= top) {
-    return { x: clamp(towards.x, left, right), y: top }
-  }
-  if (towards.y >= bottom) {
-    return { x: clamp(towards.x, left, right), y: bottom }
+  if (xOut !== 0 && yOut !== 0) {
+    const cx = (left + right) / 2
+    const cy = (top + bottom) / 2
+    const dx = towards.x - cx
+    const dy = towards.y - cy
+    const t = Math.min((box.w / 2) / Math.abs(dx), (box.h / 2) / Math.abs(dy))
+    return { x: cx + dx * t, y: cy + dy * t }
   }
   // Waypoint inside the box — degenerate; default to center.
   return nodeCenter(box)
@@ -528,16 +686,26 @@ function JunctionShape({ node }: { node: NodeBox }) {
 function LabelShape({ node }: { node: NodeBox }) {
   if (!node.label) return null
   const fontSize = node.fontSize ?? 11
+  const textX = node.x + node.w / 2
+  const lines = wrapLabel(node.label, node.w - 8, fontSize)
+  const lineHeight = fontSize * 1.2
+  // Vertically center the block of lines around the node's middle.
+  const blockHeight = lineHeight * (lines.length - 1)
+  const firstY = node.y + node.h / 2 + fontSize / 3 - blockHeight / 2
   return (
     <text
-      x={node.x + node.w / 2}
-      y={node.y + node.h / 2 + fontSize / 3}
+      x={textX}
+      y={firstY}
       textAnchor="middle"
       fontFamily={node.fontFamily ?? 'system-ui, -apple-system, sans-serif'}
       fontSize={fontSize}
       fill={node.textColor}
     >
-      {node.label}
+      {lines.map((line, i) => (
+        <tspan key={i} x={textX} dy={i === 0 ? 0 : lineHeight}>
+          {line}
+        </tspan>
+      ))}
     </text>
   )
 }
@@ -626,16 +794,28 @@ function ElementShape({
         />
       ) : null}
       {node.label ? (
-        <text
-          x={node.x + node.w / 2}
-          y={node.y + Math.min(16, node.h / 2 + fontSize / 2)}
-          textAnchor="middle"
-          fontFamily={node.fontFamily ?? 'system-ui, -apple-system, sans-serif'}
-          fontSize={fontSize}
-          fill={node.textColor}
-        >
-          {truncateLabel(node.label, node.w - (showIcon ? iconSize + 12 : 8), fontSize)}
-        </text>
+        (() => {
+          const textX = node.x + node.w / 2
+          const textY = node.y + Math.min(16, node.h / 2 + fontSize / 2)
+          const availWidth = node.w - (showIcon ? iconSize + 12 : 8)
+          const lines = wrapLabel(node.label, availWidth, fontSize)
+          return (
+            <text
+              x={textX}
+              y={textY}
+              textAnchor="middle"
+              fontFamily={node.fontFamily ?? 'system-ui, -apple-system, sans-serif'}
+              fontSize={fontSize}
+              fill={node.textColor}
+            >
+              {lines.map((line, i) => (
+                <tspan key={i} x={textX} dy={i === 0 ? 0 : fontSize * 1.2}>
+                  {line}
+                </tspan>
+              ))}
+            </text>
+          )
+        })()
       ) : null}
     </g>
   )
@@ -657,14 +837,13 @@ function IconBadge({
   const def = ICONS[iconName]
   if (!def) return null
   const scale = size / 100
-  // Stroke width is in the icon's local 0..100 coord space. At scale 0.18
-  // (icon ~18 px), strokeWidth 8 ≈ 1.4 px on screen — visible at small sizes
-  // without overwhelming the badge.
+  // Stroke width is in the icon's local 0..100 coord space. At scale 0.18,
+  // strokeWidth 5 ≈ 0.9 px on screen — thin and crisp at small sizes.
   return (
     <g
       transform={`translate(${x} ${y}) scale(${scale})`}
       stroke={color}
-      strokeWidth={8}
+      strokeWidth={5}
       fill="none"
       strokeLinejoin="round"
       strokeLinecap="round"
@@ -675,8 +854,43 @@ function IconBadge({
   )
 }
 
-function truncateLabel(label: string, width: number, fontSize: number): string {
+// Greedy word-wrap to fit `width`, with a hard line cap. The last visible line
+// is truncated with an ellipsis if there's overflow. Single words longer than
+// the line budget are hard-broken at the character boundary.
+function wrapLabel(
+  label: string,
+  width: number,
+  fontSize: number,
+  maxLines = 3,
+): string[] {
   const maxChars = Math.max(1, Math.floor(width / (fontSize * 0.55)))
-  if (label.length <= maxChars) return label
-  return label.slice(0, Math.max(1, maxChars - 1)) + '…'
+  const words = label.split(/\s+/).filter(Boolean)
+  const lines: string[] = []
+  let current = ''
+  for (const word of words) {
+    const candidate = current ? `${current} ${word}` : word
+    if (candidate.length <= maxChars) {
+      current = candidate
+      continue
+    }
+    if (current) lines.push(current)
+    if (word.length > maxChars) {
+      let rest = word
+      while (rest.length > maxChars) {
+        lines.push(rest.slice(0, maxChars))
+        rest = rest.slice(maxChars)
+      }
+      current = rest
+    } else {
+      current = word
+    }
+  }
+  if (current) lines.push(current)
+  if (lines.length > maxLines) {
+    const truncated = lines.slice(0, maxLines)
+    const last = truncated.length - 1
+    truncated[last] = truncated[last].slice(0, Math.max(1, maxChars - 1)) + '…'
+    return truncated
+  }
+  return lines
 }
